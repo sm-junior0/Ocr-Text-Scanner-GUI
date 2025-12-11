@@ -48,7 +48,7 @@ class OCRApp:
         self.root.title("Text Reader - OCR with ROI and Camera")
 
         # Canvas/display settings
-        self.canvas_width = 900
+        self.canvas_width = 800
         self.canvas_height = 600
 
         # State
@@ -90,23 +90,63 @@ class OCRApp:
             side=tk.LEFT, padx=10
         )
 
-        # Canvas for image/overlay + ROI drawing
+        # Main content area - side by side layout
+        main_content = tk.Frame(self.root)
+        main_content.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        
+        # Left side - Canvas for image/overlay + ROI drawing
+        canvas_frame = tk.Frame(main_content)
+        canvas_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 4))
+        
+        tk.Label(canvas_frame, text="Image Preview", font=("Arial", 10, "bold")).pack(pady=(0, 4))
+        
         self.canvas = tk.Canvas(
-            self.root,
+            canvas_frame,
             width=self.canvas_width,
             height=self.canvas_height,
             bg="black",
             cursor="crosshair",
         )
-        self.canvas.pack(padx=8, pady=4)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
         self.canvas.bind("<ButtonPress-1>", self.on_mouse_press)
         self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_mouse_release)
 
-        # Text output area
-        tk.Label(self.root, text="Extracted Text").pack(anchor="w", padx=8)
-        self.text_output = scrolledtext.ScrolledText(self.root, height=10, wrap=tk.WORD)
-        self.text_output.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
+        # Right side - Text output area with better styling
+        text_frame = tk.Frame(main_content)
+        text_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False, padx=(4, 0))
+        text_frame.config(width=450, height=600)  # Fixed size to ensure visibility
+        text_frame.pack_propagate(False)  # Prevent shrinking below minimum size
+        
+        # Header with title and stats
+        header_frame = tk.Frame(text_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        tk.Label(header_frame, text="Extracted Text", font=("Arial", 12, "bold")).pack(side=tk.LEFT)
+        
+        # Stats and buttons in a vertical layout for better visibility
+        controls_frame = tk.Frame(header_frame)
+        controls_frame.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        tk.Button(controls_frame, text="Copy", command=self.copy_text, width=8).pack(side=tk.TOP, padx=2, pady=2)
+        tk.Button(controls_frame, text="Clear", command=self.clear_text, width=8).pack(side=tk.TOP, padx=2, pady=2)
+        
+        self.stats_label = tk.Label(text_frame, text="", fg="gray", font=("Arial", 9), anchor="w", justify=tk.LEFT)
+        self.stats_label.pack(fill=tk.X, pady=(0, 4))
+        
+        # Text output with better styling
+        self.text_output = scrolledtext.ScrolledText(
+            text_frame,
+            wrap=tk.WORD,
+            font=("Consolas", 10),
+            bg="white",
+            fg="black",
+            relief=tk.SUNKEN,
+            borderwidth=2,
+            padx=8,
+            pady=8
+        )
+        self.text_output.pack(fill=tk.BOTH, expand=True)
 
     def _check_tesseract(self) -> None:
         """Check if Tesseract is available and show warning if not."""
@@ -359,15 +399,84 @@ class OCRApp:
                 cv2.LINE_AA,
             )
 
-        self.text_output.delete("1.0", tk.END)
-        stripped = ocr_text.strip()
-        if stripped:
-            self.text_output.insert(tk.END, stripped)
-            self.status_var.set("OCR complete. Overlay shows detected text. Resume camera if needed.")
-        else:
-            self.text_output.insert(tk.END, "[No text detected]")
-            self.status_var.set("No text detected. Try a larger ROI, better lighting, or move closer.")
+        # Format and display text
+        formatted_text = self._format_ocr_text(ocr_text, data)
+        self._display_formatted_text(formatted_text, data)
+        
+        self.status_var.set("OCR complete. Overlay shows detected text. Resume camera if needed.")
         self.display_image(annotated)
+
+    def _format_ocr_text(self, raw_text: str, data: dict = None) -> str:
+        """Format OCR text for better readability."""
+        if not raw_text or not raw_text.strip():
+            return ""
+        
+        # Clean up the text
+        lines = raw_text.split('\n')
+        formatted_lines = []
+        
+        for line in lines:
+            # Remove excessive whitespace but preserve intentional spacing
+            cleaned = ' '.join(line.split())
+            if cleaned:  # Only add non-empty lines
+                formatted_lines.append(cleaned)
+        
+        # Join lines with proper spacing
+        formatted_text = '\n'.join(formatted_lines)
+        
+        # Add a separator line if there's content
+        if formatted_text:
+            formatted_text = formatted_text.strip()
+        
+        return formatted_text
+    
+    def _display_formatted_text(self, formatted_text: str, data: dict = None) -> None:
+        """Display formatted text with statistics."""
+        self.text_output.delete("1.0", tk.END)
+        
+        if formatted_text:
+            # Insert formatted text
+            self.text_output.insert("1.0", formatted_text)
+            
+            # Calculate statistics
+            words = formatted_text.split()
+            word_count = len(words)
+            char_count = len(formatted_text)
+            line_count = len([line for line in formatted_text.split('\n') if line.strip()])
+            
+            # Calculate average confidence if data is available
+            avg_confidence = 0
+            if data and "conf" in data and "text" in data:
+                confidences = [float(data["conf"][i]) for i in range(len(data["conf"])) 
+                              if i < len(data["text"]) and data["conf"][i] != "-1" and data["text"][i].strip()]
+                avg_confidence = sum(confidences) / len(confidences) if confidences else 0
+            
+            # Update stats label
+            if avg_confidence > 0:
+                stats_text = f"Words: {word_count} | Lines: {line_count} | Chars: {char_count} | Avg Confidence: {avg_confidence:.1f}%"
+            else:
+                stats_text = f"Words: {word_count} | Lines: {line_count} | Chars: {char_count}"
+            self.stats_label.config(text=stats_text)
+        else:
+            self.text_output.insert("1.0", "[No text detected]")
+            self.stats_label.config(text="No text detected")
+            self.status_var.set("No text detected. Try a larger ROI, better lighting, or move closer.")
+    
+    def copy_text(self) -> None:
+        """Copy extracted text to clipboard."""
+        text = self.text_output.get("1.0", tk.END).strip()
+        if text and text != "[No text detected]":
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self.status_var.set("Text copied to clipboard!")
+        else:
+            self.status_var.set("No text to copy.")
+    
+    def clear_text(self) -> None:
+        """Clear the text output area."""
+        self.text_output.delete("1.0", tk.END)
+        self.stats_label.config(text="")
+        self.status_var.set("Text cleared.")
 
     # ----------------- Misc helpers -----------------
     def clear_roi(self) -> None:

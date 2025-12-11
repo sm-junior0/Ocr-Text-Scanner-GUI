@@ -7,6 +7,8 @@ GUI-based OCR tool with:
 - Text display of extracted content
 """
 
+import utils.transport
+import utils.session
 import cv2
 import pytesseract
 from pytesseract import Output, TesseractNotFoundError
